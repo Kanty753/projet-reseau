@@ -27,7 +27,7 @@ PLAYER_NAMES="${6:-}"            # Liste des pseudos (virgules)
 # INTERVAL : frequence d envoi des annonces (toutes les 5 secondes)
 # -----------------------------------------------------------------------------
 BROADCAST_PORT="5555"
-INTERVAL="5"
+INTERVAL="1"
 
 # -----------------------------------------------------------------------------
 # FONCTION : create_announcement
