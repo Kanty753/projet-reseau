@@ -1,0 +1,38 @@
+# Paires de mots pour le jeu UNDERCOVER
+# Format: mot_citoyen,mot_imposteur
+Chat,Chien
+Pomme,Poire
+Soleil,Lune
+Voiture,Moto
+Football,Basketball
+Pizza,Hamburger
+Guitare,Piano
+Été,Hiver
+Café,Thé
+Montagne,Mer
+Avion,Hélicoptère
+Bière,Vin
+Chocolat,Caramel
+Docteur,Infirmier
+Éléphant,Rhinocéros
+France,Allemagne
+Gâteau,Tarte
+Hôtel,Motel
+iPhone,Samsung
+Jardin,Parc
+Kangourou,Koala
+Lion,Tigre
+Mars,Jupiter
+Noël,Nouvel An
+Orange,Mandarine
+Paris,Londres
+Quiche,Pizza
+Rose,Tulipe
+Superman,Batman
+Tennis,Badminton
+Uber,Taxi
+Violon,Violoncelle
+WhatsApp,Telegram
+Xbox,PlayStation
+Yoga,Pilates
+Zèbre,Cheval

@@ -1,0 +1,314 @@
+/* =============================================================================
+   UNDERCOVER - Style CSS
+   Palette de couleurs vives et claires
+   ============================================================================= */
+
+/* === VARIABLES GLOBALES === */
+.root {
+    -fx-font-family: 'Segoe UI', 'Roboto', 'Arial', sans-serif;
+    -fx-background-color: #F0F4F8;
+}
+
+/* === COULEURS DE FOND === */
+.bg-primary {
+    -fx-background-color: #F0F4F8;
+}
+
+.bg-card {
+    -fx-background-color: #FFFFFF;
+    -fx-background-radius: 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.1), 10, 0, 0, 2);
+}
+
+.bg-header {
+    -fx-background-color: linear-gradient(to right, #667EEA, #764BA2);
+    -fx-background-radius: 16;
+}
+
+/* === BOUTONS === */
+.btn-primary {
+    -fx-background-color: linear-gradient(to right, #667EEA, #764BA2);
+    -fx-text-fill: white;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-padding: 12 30 12 30;
+    -fx-background-radius: 25;
+    -fx-cursor: hand;
+}
+
+.btn-primary:hover {
+    -fx-background-color: linear-gradient(to right, #5A67D8, #6B46C1);
+}
+
+.btn-secondary {
+    -fx-background-color: transparent;
+    -fx-border-color: #667EEA;
+    -fx-border-width: 2;
+    -fx-border-radius: 25;
+    -fx-text-fill: #667EEA;
+    -fx-font-size: 15px;
+    -fx-font-weight: bold;
+    -fx-padding: 12 30 12 30;
+    -fx-background-radius: 25;
+    -fx-cursor: hand;
+}
+
+.btn-secondary:hover {
+    -fx-background-color: rgba(102, 126, 234, 0.1);
+}
+
+.btn-success {
+    -fx-background-color: linear-gradient(to right, #48BB78, #38A169);
+    -fx-text-fill: white;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 10 25 10 25;
+    -fx-background-radius: 20;
+    -fx-cursor: hand;
+}
+
+.btn-danger {
+    -fx-background-color: linear-gradient(to right, #FC8181, #F56565);
+    -fx-text-fill: white;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 10 25 10 25;
+    -fx-background-radius: 20;
+    -fx-cursor: hand;
+}
+
+.btn-warning {
+    -fx-background-color: linear-gradient(to right, #F6E05E, #ECC94B);
+    -fx-text-fill: #744210;
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-padding: 10 25 10 25;
+    -fx-background-radius: 20;
+    -fx-cursor: hand;
+}
+
+.btn-icon {
+    -fx-background-color: rgba(102, 126, 234, 0.15);
+    -fx-text-fill: #667EEA;
+    -fx-font-size: 18px;
+    -fx-padding: 10 15 10 15;
+    -fx-background-radius: 12;
+    -fx-cursor: hand;
+}
+
+.btn-icon:hover {
+    -fx-background-color: rgba(102, 126, 234, 0.25);
+}
+
+/* === CHAMPS DE TEXTE === */
+.text-field-modern {
+    -fx-background-color: #EDF2F7;
+    -fx-text-fill: #2D3748;
+    -fx-prompt-text-fill: #A0AEC0;
+    -fx-font-size: 15px;
+    -fx-padding: 14 18 14 18;
+    -fx-background-radius: 12;
+    -fx-border-color: transparent;
+}
+
+.text-field-modern:focused {
+    -fx-background-color: #FFFFFF;
+    -fx-border-color: #667EEA;
+    -fx-border-width: 2;
+    -fx-border-radius: 12;
+    -fx-effect: dropshadow(gaussian, rgba(102,126,234,0.3), 8, 0, 0, 0);
+}
+
+/* === CARTES === */
+.card {
+    -fx-background-color: #FFFFFF;
+    -fx-background-radius: 16;
+    -fx-padding: 20;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 12, 0, 0, 4);
+}
+
+.card-hover {
+    -fx-background-color: #FFFFFF;
+    -fx-background-radius: 16;
+    -fx-padding: 15;
+    -fx-cursor: hand;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.08), 12, 0, 0, 4);
+}
+
+.card-hover:hover {
+    -fx-background-color: #F7FAFC;
+    -fx-effect: dropshadow(gaussian, rgba(102,126,234,0.2), 16, 0, 0, 6);
+}
+
+/* === CARTES JOUEURS === */
+.player-card {
+    -fx-background-color: #FFFFFF;
+    -fx-background-radius: 14;
+    -fx-padding: 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.06), 8, 0, 0, 2);
+}
+
+.player-card-citizen {
+    -fx-background-color: linear-gradient(135deg, #C6F6D5, #9AE6B4);
+    -fx-background-radius: 14;
+    -fx-padding: 16;
+}
+
+.player-card-impostor {
+    -fx-background-color: linear-gradient(135deg, #FED7D7, #FC8181);
+    -fx-background-radius: 14;
+    -fx-padding: 16;
+}
+
+.player-card-local {
+    -fx-border-color: #667EEA;
+    -fx-border-width: 3;
+    -fx-border-radius: 14;
+}
+
+.player-name {
+    -fx-font-size: 16px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2D3748;
+}
+
+.player-word {
+    -fx-font-size: 13px;
+    -fx-text-fill: #4A5568;
+    -fx-background-color: rgba(0,0,0,0.05);
+    -fx-background-radius: 8;
+    -fx-padding: 6 12 6 12;
+}
+
+/* === LABELS === */
+.title-label {
+    -fx-font-size: 42px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2D3748;
+}
+
+.subtitle-label {
+    -fx-font-size: 18px;
+    -fx-text-fill: #718096;
+}
+
+.section-title {
+    -fx-font-size: 20px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2D3748;
+}
+
+.label-muted {
+    -fx-font-size: 13px;
+    -fx-text-fill: #A0AEC0;
+}
+
+/* === CHAT === */
+.chat-container {
+    -fx-background-color: #FFFFFF;
+    -fx-background-radius: 16;
+    -fx-effect: dropshadow(gaussian, rgba(0,0,0,0.06), 8, 0, 0, 2);
+}
+
+.chat-message {
+    -fx-background-color: #EDF2F7;
+    -fx-background-radius: 12;
+    -fx-padding: 10 14 10 14;
+}
+
+.chat-message-system {
+    -fx-background-color: linear-gradient(to right, rgba(102,126,234,0.15), rgba(118,75,162,0.15));
+}
+
+.chat-message-word {
+    -fx-background-color: rgba(72,187,120,0.2);
+}
+
+.chat-message-vote {
+    -fx-background-color: rgba(246,224,94,0.3);
+}
+
+.chat-input {
+    -fx-background-color: #EDF2F7;
+    -fx-text-fill: #2D3748;
+    -fx-prompt-text-fill: #A0AEC0;
+    -fx-font-size: 14px;
+    -fx-padding: 12 16 12 16;
+    -fx-background-radius: 25;
+}
+
+/* === INDICATEUR DE PHASE === */
+.phase-indicator {
+    -fx-background-color: linear-gradient(to right, #667EEA, #764BA2);
+    -fx-background-radius: 20;
+    -fx-padding: 8 20 8 20;
+}
+
+.phase-text {
+    -fx-font-size: 14px;
+    -fx-font-weight: bold;
+    -fx-text-fill: white;
+}
+
+/* === TIMER === */
+.timer-display {
+    -fx-font-size: 48px;
+    -fx-font-weight: bold;
+    -fx-text-fill: #2D3748;
+}
+
+.timer-warning {
+    -fx-text-fill: #ED8936;
+}
+
+.timer-danger {
+    -fx-text-fill: #F56565;
+}
+
+/* === SCROLL PANE === */
+.scroll-pane {
+    -fx-background-color: transparent;
+    -fx-background: transparent;
+}
+
+.scroll-pane .viewport {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar {
+    -fx-background-color: transparent;
+}
+
+.scroll-bar .thumb {
+    -fx-background-color: rgba(0, 0, 0, 0.15);
+    -fx-background-radius: 5;
+}
+
+.scroll-bar .thumb:hover {
+    -fx-background-color: rgba(0, 0, 0, 0.25);
+}
+
+/* === ROLES === */
+.role-citizen {
+    -fx-background-color: linear-gradient(135deg, #48BB78, #38A169);
+}
+
+.role-impostor {
+    -fx-background-color: linear-gradient(135deg, #F56565, #E53E3E);
+}
+
+/* === ANIMATION OVERLAY === */
+.overlay-victory {
+    -fx-background-color: rgba(255, 255, 255, 0.95);
+}
+
+/* === SPINNER === */
+.spinner {
+    -fx-background-color: #EDF2F7;
+    -fx-background-radius: 10;
+}
+
+.spinner .text-field {
+    -fx-background-color: transparent;
+    -fx-text-fill: #2D3748;
+}
