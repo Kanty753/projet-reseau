@@ -78,6 +78,8 @@ public class GameController {
             Path path = Paths.get("data", "word_pairs.txt");
             if (Files.exists(path)) {
                 Files.lines(path).forEach(line -> {
+                    // Ignorer les commentaires et les lignes vides
+                    if (line.trim().isEmpty() || line.trim().startsWith("#")) return;
                     String[] parts = line.split(",");
                     if (parts.length == 2) {
                         wordPairs.add(new String[]{parts[0].trim(), parts[1].trim()});
@@ -300,6 +302,7 @@ public class GameController {
             case "GAME_END" -> handleGameEnd(message);
             case "GUESS" -> handleGuess(message);
             case "PING" -> handlePing(message);
+            case "GAME_MESSAGE" -> handleGameMessage(message);
             // Nouveaux messages pour la synchronisation des tours
             case "TURN_START" -> handleTurnStart(message);
             case "TIMER_SYNC" -> handleTimerSync(message);
@@ -322,6 +325,28 @@ public class GameController {
                 message.get("_senderPort").getAsInt(),
                 pong
             );
+        }
+    }
+    
+    /**
+     * Gere les messages de jeu generiques (eliminations, egalites, etc.)
+     */
+    private void handleGameMessage(JsonObject message) {
+        String senderId = message.has("senderId") ? message.get("senderId").getAsString() : "SYSTEM";
+        String senderName = message.has("senderName") ? message.get("senderName").getAsString() : "Systeme";
+        String content = message.has("content") ? message.get("content").getAsString() : "";
+        String messageType = message.has("messageType") ? message.get("messageType").getAsString() : "SYSTEM";
+        
+        GameMessage.Type type;
+        try {
+            type = GameMessage.Type.valueOf(messageType);
+        } catch (IllegalArgumentException e) {
+            type = GameMessage.Type.SYSTEM;
+        }
+        
+        GameMessage gameMsg = new GameMessage(senderId, senderName, content, type);
+        for (GameEventListener listener : listeners) {
+            listener.onMessageReceived(gameMsg);
         }
     }
     
@@ -1154,6 +1179,11 @@ public class GameController {
         msg.add("players", players);
         
         broadcastToAll(msg);
+        
+        // Notifier localement (l'hote est exclu du broadcast UDP)
+        if (isHost) {
+            notifyPlayersUpdated();
+        }
     }
     
     private void broadcastPhaseChange(GameSession.State state) {
@@ -1161,6 +1191,13 @@ public class GameController {
         msg.addProperty("type", "PHASE_CHANGE");
         msg.addProperty("state", state.name());
         broadcastToAll(msg);
+        
+        // Notifier localement (l'hote est exclu du broadcast UDP)
+        if (isHost) {
+            for (GameEventListener listener : listeners) {
+                listener.onPhaseChanged(state);
+            }
+        }
     }
     
     private void broadcastGameState() {
@@ -1173,15 +1210,28 @@ public class GameController {
         msg.addProperty("type", "GAME_END");
         msg.addProperty("message", message);
         broadcastToAll(msg);
+        
+        // Notifier localement (l'hote est exclu du broadcast UDP)
+        if (isHost) {
+            cancelCurrentTimer();
+            for (GameEventListener listener : listeners) {
+                listener.onGameEnded(message);
+            }
+        }
     }
     
     /**
      * Broadcast un message a tous les joueurs via UDP (rapide, sans latence)
+     * Si on est l'hote, on s'exclut car les notifications locales sont faites separement
      */
     private void broadcastToAll(JsonObject message) {
         if (session == null) return;
         
         for (Player player : session.getPlayers()) {
+            // L'hote ne s'envoie pas a lui-meme (il traite localement)
+            if (isHost && localPlayer != null && player.getId().equals(localPlayer.getId())) {
+                continue;
+            }
             // Utiliser UDP pour les messages de jeu (rapide)
             networkBridge.sendUdpMessage(player.getIpAddress(), player.getUdpPort(), message);
         }

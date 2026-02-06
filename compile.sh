@@ -12,3 +12,9 @@ find src/main/java -name "*.java" | xargs javac \
   --add-modules javafx.controls,javafx.fxml,javafx.graphics \
   -cp "$GSON_JAR" \
   -d target/classes
+
+# Copier les ressources (CSS, etc.) dans le classpath
+cp -r src/main/resources/* target/classes/ 2>/dev/null || true
+
+# Rendre les scripts reseau executables
+chmod +x scripts/network/*.sh 2>/dev/null || true

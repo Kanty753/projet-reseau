@@ -4,31 +4,43 @@ import com.google.gson.*;
 import java.util.concurrent.*;
 import java.util.function.Consumer;
 import java.util.*;
-import java.net.*;
 import java.io.*;
-import java.nio.charset.StandardCharsets;
+import java.nio.file.*;
 
 /**
- * NetworkBridge - Pont entre Java et les scripts Bash pour le réseau
- * Utilise UDP pour les messages de jeu (faible latence) et TCP pour les connexions initiales
+ * NetworkBridge - Pont entre Java et les scripts Bash pour le reseau
+ * 
+ * PRINCIPE : Java ne fait AUCUN socket.
+ * Toute la communication passe par des scripts Bash :
+ *   - broadcast_server.sh / broadcast_localhost.sh : annonces UDP
+ *   - listen_servers.sh / listen_localhost.sh : decouverte de serveurs
+ *   - send_tcp.sh : envoi TCP (fiable, pour JOIN)
+ *   - tcp_server.sh + handle_tcp_client.sh : reception TCP
+ *   - send_udp.sh : envoi UDP (rapide, pour messages de jeu)
+ *   - udp_server.sh : reception UDP
+ *   - get_local_ip.sh : recuperation de l'IP locale
  */
 public class NetworkBridge {
     
     private final BashExecutor bashExecutor;
     private final Gson gson;
     private final ScheduledExecutorService scheduler;
-    private final ConcurrentHashMap<String, Consumer<JsonObject>> messageHandlers;
     
     private String broadcastProcessId;
-    private String serverListenerProcessId;
+    private String tcpServerProcessId;
+    private String udpServerProcessId;
     private volatile boolean running;
     private volatile boolean localhostMode;
     
-    // UDP pour les messages de jeu (rapide, sans connexion)
-    private DatagramSocket udpSocket;
-    private Thread udpListenerThread;
+    // Port UDP en cours d'ecoute
     private int udpPort;
-    private static final int UDP_BUFFER_SIZE = 8192;
+    // Port TCP en cours d'ecoute
+    private int tcpPort;
+    
+    // Repertoire d'inbox TCP (les messages recus par tcp_server.sh y sont ecrits)
+    private static final String TCP_INBOX_DIR = "/tmp/undercover_tcp_inbox";
+    private static final String TCP_INBOX_FILE = TCP_INBOX_DIR + "/messages.jsonl";
+    private Thread tcpInboxPollerThread;
     
     public NetworkBridge() {
         this.bashExecutor = new BashExecutor();
@@ -38,10 +50,10 @@ public class NetworkBridge {
             t.setDaemon(true);
             return t;
         });
-        this.messageHandlers = new ConcurrentHashMap<>();
         this.running = false;
         this.localhostMode = false;
         this.udpPort = 0;
+        this.tcpPort = 0;
     }
     
     /**
@@ -218,43 +230,26 @@ public class NetworkBridge {
         }, 0, 3, TimeUnit.SECONDS);
     }
     
+    // =====================================================================
+    // ENVOI DE MESSAGES TCP (via send_tcp.sh)
+    // =====================================================================
+    
     /**
-     * Envoie un message TCP à un serveur (implémentation Java directe)
-     * Utilise DataOutputStream pour envoyer la longueur puis le message
+     * Envoie un message TCP a un serveur distant via le script Bash send_tcp.sh.
+     * Le script ouvre la connexion, envoie le message, et retourne la reponse.
+     * Java ne fait aucun socket directement.
      */
     public CompletableFuture<JsonObject> sendMessage(String targetIp, int targetPort, JsonObject message) {
-        String jsonMessage = new Gson().toJson(message);  // Version compacte (sans pretty print)
+        String jsonMessage = new Gson().toJson(message);
         
-        return CompletableFuture.supplyAsync(() -> {
-            try (java.net.Socket socket = new java.net.Socket()) {
-                socket.connect(new java.net.InetSocketAddress(targetIp, targetPort), 5000);
-                socket.setSoTimeout(10000);
-                socket.setTcpNoDelay(true);  // Désactiver Nagle pour envoi immédiat
-                
-                System.out.println("Connexion établie à " + targetIp + ":" + targetPort);
-                
-                // Envoyer le message avec longueur préfixée
-                java.io.DataOutputStream dos = new java.io.DataOutputStream(socket.getOutputStream());
-                byte[] messageBytes = jsonMessage.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                dos.writeInt(messageBytes.length);
-                dos.write(messageBytes);
-                dos.flush();
-                System.out.println("Message envoyé (" + messageBytes.length + " bytes): " + 
-                    jsonMessage.substring(0, Math.min(100, jsonMessage.length())) + "...");
-                
-                // Lire la réponse avec longueur préfixée
-                java.io.DataInputStream dis = new java.io.DataInputStream(socket.getInputStream());
-                int responseLength = dis.readInt();
-                byte[] responseBytes = new byte[responseLength];
-                dis.readFully(responseBytes);
-                String response = new String(responseBytes, java.nio.charset.StandardCharsets.UTF_8);
-                System.out.println("Réponse reçue (" + responseLength + " bytes): " + response);
-                
-                if (response != null && !response.isEmpty()) {
+        return bashExecutor.executeAsync("send_tcp.sh", targetIp, String.valueOf(targetPort), jsonMessage)
+            .thenApply(response -> {
+                System.out.println("Reponse TCP recue: " + response);
+                if (response != null && !response.trim().isEmpty()) {
                     try {
-                        return JsonParser.parseString(response).getAsJsonObject();
+                        return JsonParser.parseString(response.trim()).getAsJsonObject();
                     } catch (Exception e) {
-                        System.err.println("Erreur parsing réponse: " + e.getMessage());
+                        System.err.println("Erreur parsing reponse TCP: " + e.getMessage());
                         JsonObject result = new JsonObject();
                         result.addProperty("success", true);
                         result.addProperty("raw", response);
@@ -262,160 +257,181 @@ public class NetworkBridge {
                     }
                 } else {
                     JsonObject result = new JsonObject();
-                    result.addProperty("success", true);
+                    result.addProperty("success", false);
+                    result.addProperty("error", "Reponse vide");
                     return result;
                 }
-            } catch (Exception e) {
-                System.err.println("Erreur connexion TCP: " + e.getMessage());
-                e.printStackTrace();
+            })
+            .exceptionally(e -> {
+                System.err.println("Erreur envoi TCP: " + e.getMessage());
                 JsonObject error = new JsonObject();
                 error.addProperty("error", e.getMessage());
                 error.addProperty("success", false);
                 return error;
-            }
-        }, scheduler);
+            });
     }
     
-    // ===== UDP MESSAGING - RAPIDE, SANS CONNEXION =====
+    // =====================================================================
+    // SERVEUR TCP (via tcp_server.sh + handle_tcp_client.sh)
+    // =====================================================================
     
     /**
-     * Démarre le serveur UDP pour recevoir les messages de jeu
-     * UDP est plus rapide que TCP car pas de handshake ni de confirmation
+     * Demarre le serveur TCP pour recevoir les messages.
+     * Le script tcp_server.sh ecoute sur le port et ecrit les messages
+     * dans /tmp/undercover_tcp_inbox/messages.jsonl via handle_tcp_client.sh.
+     * Java lit ce fichier en continu (polling) pour traiter les messages.
      */
-    public void startUdpServer(int port, Consumer<JsonObject> messageHandler) {
-        this.udpPort = port;
+    public void startTcpServer(int port, Consumer<JsonObject> messageHandler) {
+        this.tcpPort = port;
         running = true;
         
-        udpListenerThread = new Thread(() -> {
-            try {
-                udpSocket = new DatagramSocket(port);
-                udpSocket.setReuseAddress(true);
-                System.out.println("UDP Server listening on port " + port);
-                
-                byte[] buffer = new byte[UDP_BUFFER_SIZE];
-                
-                while (running && !udpSocket.isClosed()) {
-                    try {
-                        DatagramPacket packet = new DatagramPacket(buffer, buffer.length);
-                        udpSocket.receive(packet);
-                        
-                        String message = new String(packet.getData(), 0, packet.getLength(), StandardCharsets.UTF_8);
-                        String senderInfo = packet.getAddress().getHostAddress() + ":" + packet.getPort();
-                        
-                        // Traiter dans un thread séparé pour ne pas bloquer l'écoute
-                        scheduler.submit(() -> {
-                            try {
-                                JsonObject msg = JsonParser.parseString(message).getAsJsonObject();
-                                // Ajouter les infos de l'expéditeur
-                                msg.addProperty("_senderIp", packet.getAddress().getHostAddress());
-                                msg.addProperty("_senderPort", packet.getPort());
-                                
-                                if (messageHandler != null) {
-                                    messageHandler.accept(msg);
-                                }
-                            } catch (Exception e) {
-                                System.err.println("Erreur parsing UDP message: " + e.getMessage());
-                            }
-                        });
-                        
-                    } catch (SocketException e) {
-                        if (running) {
-                            System.err.println("UDP Socket error: " + e.getMessage());
-                        }
-                    }
-                }
-            } catch (Exception e) {
-                System.err.println("Failed to start UDP server on port " + port + ": " + e.getMessage());
-            }
-        }, "UDP-Server-" + port);
+        // Nettoyer l'inbox avant de demarrer
+        try {
+            Files.createDirectories(Paths.get(TCP_INBOX_DIR));
+            Files.deleteIfExists(Paths.get(TCP_INBOX_FILE));
+        } catch (IOException e) {
+            System.err.println("Erreur creation inbox TCP: " + e.getMessage());
+        }
         
-        udpListenerThread.setDaemon(true);
-        udpListenerThread.start();
+        // Demarrer le script tcp_server.sh en arriere-plan
+        tcpServerProcessId = bashExecutor.startBackground(
+            "tcp_server.sh",
+            output -> {
+                System.out.println("[TCP Server stdout] " + output);
+            },
+            String.valueOf(port)
+        );
+        System.out.println("TCP Server (Bash) demarre sur le port " + port);
+        
+        // Demarrer le polling du fichier inbox
+        startTcpInboxPoller(messageHandler);
     }
     
     /**
-     * Envoie un message UDP (fire-and-forget, très rapide)
-     * Pas d'attente de confirmation - idéal pour les messages de jeu
+     * Lit en continu le fichier d'inbox TCP pour les messages entrants.
+     * Chaque ligne est un message JSON ecrit par handle_tcp_client.sh.
+     * On utilise un polling rapide (100ms) pour une latence faible.
+     */
+    private void startTcpInboxPoller(Consumer<JsonObject> messageHandler) {
+        tcpInboxPollerThread = new Thread(() -> {
+            Path inboxPath = Paths.get(TCP_INBOX_FILE);
+            long lastPosition = 0;
+            
+            while (running) {
+                try {
+                    if (Files.exists(inboxPath)) {
+                        long fileSize = Files.size(inboxPath);
+                        if (fileSize > lastPosition) {
+                            // Lire les nouvelles lignes depuis la derniere position
+                            try (RandomAccessFile raf = new RandomAccessFile(inboxPath.toFile(), "r")) {
+                                raf.seek(lastPosition);
+                                String line;
+                                while ((line = raf.readLine()) != null) {
+                                    if (!line.trim().isEmpty()) {
+                                        // readLine retourne en ISO-8859-1, convertir en UTF-8
+                                        String utf8Line = new String(line.getBytes("ISO-8859-1"), "UTF-8");
+                                        try {
+                                            JsonObject msg = JsonParser.parseString(utf8Line.trim()).getAsJsonObject();
+                                            if (messageHandler != null) {
+                                                scheduler.submit(() -> messageHandler.accept(msg));
+                                            }
+                                        } catch (Exception e) {
+                                            System.err.println("Erreur parsing message TCP inbox: " + e.getMessage());
+                                        }
+                                    }
+                                }
+                                lastPosition = raf.getFilePointer();
+                            }
+                        }
+                    }
+                    // Polling interval : 100ms pour une latence faible
+                    Thread.sleep(100);
+                } catch (InterruptedException e) {
+                    break;
+                } catch (Exception e) {
+                    System.err.println("Erreur lecture inbox TCP: " + e.getMessage());
+                    try { Thread.sleep(500); } catch (InterruptedException ie) { break; }
+                }
+            }
+        }, "TCP-Inbox-Poller");
+        tcpInboxPollerThread.setDaemon(true);
+        tcpInboxPollerThread.start();
+    }
+    
+    /**
+     * Arrete le serveur TCP (processus Bash + poller)
+     */
+    public void stopTcpServer() {
+        if (tcpServerProcessId != null) {
+            bashExecutor.stopBackground(tcpServerProcessId);
+            tcpServerProcessId = null;
+        }
+        if (tcpInboxPollerThread != null) {
+            tcpInboxPollerThread.interrupt();
+            tcpInboxPollerThread = null;
+        }
+    }
+    
+    // =====================================================================
+    // ENVOI DE MESSAGES UDP (via send_udp.sh)
+    // =====================================================================
+    
+    /**
+     * Envoie un message UDP (fire-and-forget) via le script Bash send_udp.sh.
+     * Aucun socket Java. Le script utilise socat ou netcat.
      */
     public void sendUdpMessage(String targetIp, int targetPort, JsonObject message) {
+        String jsonMessage = new Gson().toJson(message);
+        
         scheduler.submit(() -> {
             try {
-                DatagramSocket socket = new DatagramSocket();
-                socket.setSoTimeout(1000);
-                
-                String jsonMessage = new Gson().toJson(message);
-                byte[] data = jsonMessage.getBytes(StandardCharsets.UTF_8);
-                
-                InetAddress address = InetAddress.getByName(targetIp);
-                DatagramPacket packet = new DatagramPacket(data, data.length, address, targetPort);
-                
-                socket.send(packet);
-                socket.close();
-                
+                bashExecutor.executeSync("send_udp.sh", targetIp, String.valueOf(targetPort), jsonMessage);
             } catch (Exception e) {
                 System.err.println("Erreur UDP send to " + targetIp + ":" + targetPort + " - " + e.getMessage());
             }
         });
     }
     
+    // =====================================================================
+    // SERVEUR UDP (via udp_server.sh)
+    // =====================================================================
+    
     /**
-     * Envoie un message UDP et attend une réponse (avec timeout court)
-     * Utile pour les confirmations critiques
+     * Demarre le serveur UDP pour recevoir les messages de jeu.
+     * Le script udp_server.sh ecoute en continu et ecrit chaque message
+     * recu sur stdout, qui est lu par BashExecutor.startBackground().
      */
-    public CompletableFuture<JsonObject> sendUdpMessageWithResponse(String targetIp, int targetPort, JsonObject message, int timeoutMs) {
-        return CompletableFuture.supplyAsync(() -> {
-            try {
-                DatagramSocket socket = new DatagramSocket();
-                socket.setSoTimeout(timeoutMs);
-                
-                String jsonMessage = new Gson().toJson(message);
-                byte[] data = jsonMessage.getBytes(StandardCharsets.UTF_8);
-                
-                InetAddress address = InetAddress.getByName(targetIp);
-                DatagramPacket sendPacket = new DatagramPacket(data, data.length, address, targetPort);
-                socket.send(sendPacket);
-                
-                // Attendre la réponse
-                byte[] buffer = new byte[UDP_BUFFER_SIZE];
-                DatagramPacket receivePacket = new DatagramPacket(buffer, buffer.length);
-                socket.receive(receivePacket);
-                
-                String response = new String(receivePacket.getData(), 0, receivePacket.getLength(), StandardCharsets.UTF_8);
-                socket.close();
-                
-                return JsonParser.parseString(response).getAsJsonObject();
-                
-            } catch (SocketTimeoutException e) {
-                JsonObject timeout = new JsonObject();
-                timeout.addProperty("success", false);
-                timeout.addProperty("error", "timeout");
-                return timeout;
-            } catch (Exception e) {
-                JsonObject error = new JsonObject();
-                error.addProperty("success", false);
-                error.addProperty("error", e.getMessage());
-                return error;
-            }
-        }, scheduler);
+    public void startUdpServer(int port, Consumer<JsonObject> messageHandler) {
+        this.udpPort = port;
+        running = true;
+        
+        udpServerProcessId = bashExecutor.startBackground(
+            "udp_server.sh",
+            output -> {
+                // Chaque ligne de stdout est un message JSON recu par UDP
+                if (output != null && !output.trim().isEmpty()) {
+                    try {
+                        JsonObject msg = JsonParser.parseString(output.trim()).getAsJsonObject();
+                        if (messageHandler != null) {
+                            scheduler.submit(() -> messageHandler.accept(msg));
+                        }
+                    } catch (Exception e) {
+                        System.err.println("Erreur parsing UDP message: " + e.getMessage());
+                    }
+                }
+            },
+            String.valueOf(port)
+        );
+        System.out.println("UDP Server (Bash) demarre sur le port " + port);
     }
     
     /**
-     * Envoie une réponse UDP (pour répondre à un message reçu)
-     */
-    public void sendUdpResponse(String targetIp, int targetPort, JsonObject response) {
-        sendUdpMessage(targetIp, targetPort, response);
-    }
-    
-    /**
-     * Arrête le serveur UDP
+     * Arrete le serveur UDP (processus Bash)
      */
     public void stopUdpServer() {
-        if (udpSocket != null && !udpSocket.isClosed()) {
-            udpSocket.close();
-        }
-        if (udpListenerThread != null) {
-            udpListenerThread.interrupt();
-            udpListenerThread = null;
+        if (udpServerProcessId != null) {
+            bashExecutor.stopBackground(udpServerProcessId);
+            udpServerProcessId = null;
         }
     }
     
@@ -426,136 +442,19 @@ public class NetworkBridge {
         return udpPort;
     }
     
-    // Serveur TCP Java natif
-    private java.net.ServerSocket tcpServerSocket;
-    private Thread tcpServerThread;
+    // =====================================================================
+    // UTILITAIRES
+    // =====================================================================
     
     /**
-     * Démarre le serveur TCP pour recevoir les messages (implémentation Java)
-     */
-    public void startTcpServer(int port, Consumer<JsonObject> messageHandler) {
-        running = true;
-        
-        tcpServerThread = new Thread(() -> {
-            try {
-                tcpServerSocket = new java.net.ServerSocket(port);
-                tcpServerSocket.setReuseAddress(true);
-                System.out.println("TCP Server listening on port " + port);
-                
-                while (running && !tcpServerSocket.isClosed()) {
-                    try {
-                        java.net.Socket clientSocket = tcpServerSocket.accept();
-                        
-                        // Gérer chaque client dans un thread séparé
-                        scheduler.submit(() -> handleClient(clientSocket, messageHandler));
-                        
-                    } catch (java.net.SocketException e) {
-                        // Socket fermé, c'est normal à l'arrêt
-                        if (running) {
-                            System.err.println("Socket error: " + e.getMessage());
-                        }
-                    }
-                }
-            } catch (java.io.IOException e) {
-                System.err.println("Failed to start TCP server on port " + port + ": " + e.getMessage());
-            }
-        }, "TCP-Server-" + port);
-        
-        tcpServerThread.setDaemon(true);
-        tcpServerThread.start();
-    }
-    
-    private void handleClient(java.net.Socket clientSocket, Consumer<JsonObject> messageHandler) {
-        try {
-            clientSocket.setSoTimeout(30000);
-            clientSocket.setTcpNoDelay(true);
-            String clientInfo = clientSocket.getInetAddress().getHostAddress() + ":" + clientSocket.getPort();
-            System.out.println("Client connecté: " + clientInfo);
-            
-            // Lire avec longueur préfixée
-            java.io.DataInputStream dis = new java.io.DataInputStream(clientSocket.getInputStream());
-            java.io.DataOutputStream dos = new java.io.DataOutputStream(clientSocket.getOutputStream());
-            
-            int messageLength = dis.readInt();
-            byte[] messageBytes = new byte[messageLength];
-            dis.readFully(messageBytes);
-            String line = new String(messageBytes, java.nio.charset.StandardCharsets.UTF_8);
-            
-            System.out.println("Message reçu de " + clientInfo + " (" + messageLength + " bytes): " + line);
-            
-            try {
-                JsonObject msg = JsonParser.parseString(line).getAsJsonObject();
-                
-                // Envoyer une réponse de confirmation AVANT de traiter
-                JsonObject response = new JsonObject();
-                response.addProperty("success", true);
-                response.addProperty("status", "received");
-                String responseStr = new Gson().toJson(response);
-                byte[] responseBytes = responseStr.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                dos.writeInt(responseBytes.length);
-                dos.write(responseBytes);
-                dos.flush();
-                System.out.println("Réponse envoyée (" + responseBytes.length + " bytes): " + responseStr);
-                
-                // Traiter le message dans un thread séparé pour ne pas bloquer
-                if (messageHandler != null) {
-                    System.out.println("Appel du handler pour le message type: " + 
-                        (msg.has("type") ? msg.get("type").getAsString() : "inconnu"));
-                    scheduler.submit(() -> messageHandler.accept(msg));
-                }
-            } catch (Exception e) {
-                System.err.println("Erreur parsing JSON: " + e.getMessage());
-                JsonObject error = new JsonObject();
-                error.addProperty("success", false);
-                error.addProperty("error", "Invalid JSON: " + e.getMessage());
-                String errorStr = new Gson().toJson(error);
-                byte[] errorBytes = errorStr.getBytes(java.nio.charset.StandardCharsets.UTF_8);
-                dos.writeInt(errorBytes.length);
-                dos.write(errorBytes);
-                dos.flush();
-            }
-        } catch (Exception e) {
-            System.err.println("Erreur handleClient: " + e.getMessage());
-        } finally {
-            try {
-                clientSocket.close();
-            } catch (Exception ignored) {}
-        }
-    }
-    
-    /**
-     * Arrête le serveur TCP
-     */
-    public void stopTcpServer() {
-        // Fermer le serveur TCP Java
-        if (tcpServerSocket != null && !tcpServerSocket.isClosed()) {
-            try {
-                tcpServerSocket.close();
-            } catch (Exception e) {
-                // Ignorer
-            }
-        }
-        if (tcpServerThread != null) {
-            tcpServerThread.interrupt();
-            tcpServerThread = null;
-        }
-        
-        // Aussi arrêter le processus Bash si existant
-        if (serverListenerProcessId != null) {
-            bashExecutor.stopBackground(serverListenerProcessId);
-            serverListenerProcessId = null;
-        }
-    }
-    
-    /**
-     * Récupère l'IP locale
+     * Recupere l'IP locale via le script Bash get_local_ip.sh
      */
     public String getLocalIp() {
         return bashExecutor.getLocalIp();
     }
     
     /**
-     * Arrête tous les processus réseau
+     * Arrete tous les processus reseau
      */
     public void shutdown() {
         running = false;
@@ -566,9 +465,10 @@ public class NetworkBridge {
         bashExecutor.shutdown();
     }
     
-    /**
-     * Classe interne pour les infos serveur
-     */
+    // =====================================================================
+    // CLASSE ServerInfo
+    // =====================================================================
+    
     public static class ServerInfo {
         public final String ip;
         public final int port;
